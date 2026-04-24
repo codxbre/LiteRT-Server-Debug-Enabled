@@ -2,6 +2,7 @@ package com.litert.server.data
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonElement
 
 // OpenAI-compatible request/response models
 
@@ -17,7 +18,7 @@ data class OaiChatRequest(
 @Serializable
 data class OaiMessage(
     val role: String,
-    val content: String
+    val content: JsonElement // Use JsonElement to handle both String and Array/Object content
 )
 
 @Serializable

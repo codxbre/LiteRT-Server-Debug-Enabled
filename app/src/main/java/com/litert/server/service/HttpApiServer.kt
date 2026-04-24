@@ -30,6 +30,7 @@ import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.plugins.cors.routing.CORS
 import io.ktor.server.plugins.statuspages.StatusPages
 import io.ktor.server.request.receive
+import io.ktor.server.request.receiveText
 import io.ktor.server.response.respond
 import io.ktor.server.response.respondTextWriter
 import io.ktor.server.routing.get
@@ -39,6 +40,8 @@ import io.ktor.server.routing.routing
 import kotlinx.coroutines.flow.toList
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.jsonPrimitive
 
 class HttpApiServer(
     private val engine: LiteRTEngine,
@@ -49,6 +52,14 @@ class HttpApiServer(
         private set
 
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
+
+    private fun JsonElement.asContentString(): String {
+        return try {
+            this.jsonPrimitive.content
+        } catch (e: Exception) {
+            this.toString()
+        }
+    }
 
     fun start(): Int {
         for (tryPort in 8080..8082) {
@@ -62,7 +73,7 @@ class HttpApiServer(
                     }
                     install(StatusPages) {
                         exception<Throwable> { call, cause ->
-                            DebugLogger.log("Unhandled exception in route: ${cause.message}", Log.ERROR, cause)
+                            DebugLogger.log("Unhandled exception: ${cause.message}", Log.ERROR, cause)
                             call.respond(
                                 HttpStatusCode.InternalServerError,
                                 ErrorResponse(
@@ -76,188 +87,99 @@ class HttpApiServer(
 
                     routing {
 
-                        // ── health ──────────────────────────────────────────
                         get("/health") {
                             DebugLogger.startRequest()
-                            DebugLogger.log("GET /health called")
-                            call.respond(
-                                HealthResponse(
-                                    status = "ok",
-                                    model = "gemma-4-E2B",
-                                    gpu = engine.getBackend() == "GPU",
-                                    ready = engine.isReady,
-                                    debug = DebugLogger.getRequestLogs()
-                                )
-                            )
+                            call.respond(HealthResponse("ok", "gemma-4-E2B", engine.getBackend() == "GPU", engine.isReady, DebugLogger.getRequestLogs()))
                             DebugLogger.clearRequest()
                         }
 
-                        // ── OpenAI-compatible v1 routes ──────────────────────
                         route("/v1") {
-
                             get("/models") {
-                                DebugLogger.startRequest()
-                                DebugLogger.log("GET /v1/models called")
-                                call.respond(
-                                    OaiModelsResponse(
-                                        data = listOf(
-                                            OaiModelEntry(id = "gemma-4-e2b")
-                                        )
-                                    )
-                                )
-                                DebugLogger.clearRequest()
+                                call.respond(OaiModelsResponse(data = listOf(OaiModelEntry(id = "gemma-4-e2b"))))
                             }
 
                             post("/chat/completions") {
                                 DebugLogger.startRequest()
-                                DebugLogger.log("POST /v1/chat/completions called")
-                                if (!engine.isReady) {
-                                    DebugLogger.log("Engine not ready", Log.WARN)
-                                    call.respond(
-                                        HttpStatusCode.ServiceUnavailable,
-                                        ErrorResponse("Engine not ready", 503, DebugLogger.getRequestLogs())
-                                    )
-                                    DebugLogger.clearRequest()
-                                    return@post
-                                }
-
+                                val rawBody = call.receiveText()
+                                DebugLogger.log("POST /v1/chat/completions - RAW BODY: $rawBody")
+                                
                                 try {
-                                    val req = call.receive<OaiChatRequest>()
-                                    DebugLogger.log("Received OaiChatRequest: ${json.encodeToString(req)}")
-                                    val start = System.currentTimeMillis()
+                                    val req = json.decodeFromString<OaiChatRequest>(rawBody)
+                                    DebugLogger.log("Parsed OaiChatRequest: model=${req.model}, messages=${req.messages.size}, stream=${req.stream}")
+                                    
+                                    if (!engine.isReady) {
+                                        call.respond(HttpStatusCode.ServiceUnavailable, ErrorResponse("Engine not ready", 503, DebugLogger.getRequestLogs()))
+                                        return@post
+                                    }
 
-                                    // Build prompt from message history
+                                    val start = System.currentTimeMillis()
                                     val prompt = req.messages.joinToString("\n") {
-                                        "${it.role}: ${it.content}"
+                                        "${it.role}: ${it.content.asContentString()}"
                                     } + "\nassistant:"
-                                    DebugLogger.log("Prompt built, length: ${prompt.length}")
 
                                     if (req.stream) {
-                                        DebugLogger.log("Starting streaming response")
                                         val reqId = "chatcmpl-${System.currentTimeMillis()}"
                                         call.respondTextWriter(contentType = ContentType.Text.EventStream) {
-                                            // First chunk carries the role
-                                            val firstChunk = OaiStreamChunk(
-                                                id = reqId,
-                                                created = System.currentTimeMillis() / 1000,
-                                                model = "gemma-4-e2b",
-                                                choices = listOf(
-                                                    OaiStreamChoice(
-                                                        index = 0,
-                                                        delta = OaiDelta(role = "assistant", content = "")
-                                                    )
-                                                ),
-                                                debug = DebugLogger.getRequestLogs()
-                                            )
+                                            val firstChunk = OaiStreamChunk(reqId, created = System.currentTimeMillis() / 1000, model = "gemma-4-e2b", 
+                                                choices = listOf(OaiStreamChoice(0, OaiDelta(role = "assistant", content = ""))), debug = DebugLogger.getRequestLogs())
                                             write("data: ${json.encodeToString(firstChunk)}\n\n")
                                             flush()
 
                                             engine.generateText(prompt).collect { token ->
-                                                val chunk = OaiStreamChunk(
-                                                    id = reqId,
-                                                    created = System.currentTimeMillis() / 1000,
-                                                    model = "gemma-4-e2b",
-                                                    choices = listOf(
-                                                        OaiStreamChoice(
-                                                            index = 0,
-                                                            delta = OaiDelta(content = token)
-                                                        )
-                                                    )
-                                                )
+                                                val chunk = OaiStreamChunk(reqId, created = System.currentTimeMillis() / 1000, model = "gemma-4-e2b", 
+                                                    choices = listOf(OaiStreamChoice(0, OaiDelta(content = token))))
                                                 write("data: ${json.encodeToString(chunk)}\n\n")
                                                 flush()
                                             }
 
-                                            // Final stop chunk
-                                            val stopChunk = OaiStreamChunk(
-                                                id = reqId,
-                                                created = System.currentTimeMillis() / 1000,
-                                                model = "gemma-4-e2b",
-                                                choices = listOf(
-                                                    OaiStreamChoice(
-                                                        index = 0,
-                                                        delta = OaiDelta(),
-                                                        finishReason = "stop"
-                                                    )
-                                                )
-                                            )
+                                            val stopChunk = OaiStreamChunk(reqId, created = System.currentTimeMillis() / 1000, model = "gemma-4-e2b", 
+                                                choices = listOf(OaiStreamChoice(0, OaiDelta(), finishReason = "stop")))
                                             write("data: ${json.encodeToString(stopChunk)}\n\n")
                                             write("data: [DONE]\n\n")
                                             flush()
                                         }
-                                        val ms = System.currentTimeMillis() - start
-                                        DebugLogger.log("Streaming response finished in ${ms}ms")
-                                        onRequest(RequestLogEntry(endpoint = "/v1/chat/completions", responseTimeMs = ms, statusCode = 200))
+                                        onRequest(RequestLogEntry(endpoint = "/v1/chat/completions", responseTimeMs = System.currentTimeMillis() - start, statusCode = 200))
                                     } else {
-                                        DebugLogger.log("Starting non-streaming response")
                                         val tokens = engine.generateText(prompt).toList()
                                         val content = tokens.joinToString("")
                                         val ms = System.currentTimeMillis() - start
-                                        DebugLogger.log("Generation finished in ${ms}ms, tokens: ${tokens.size}")
                                         onRequest(RequestLogEntry(endpoint = "/v1/chat/completions", responseTimeMs = ms, statusCode = 200))
-                                        call.respond(
-                                            OaiChatResponse(
-                                                id = "chatcmpl-${System.currentTimeMillis()}",
-                                                created = System.currentTimeMillis() / 1000,
-                                                model = "gemma-4-e2b",
-                                                choices = listOf(
-                                                    OaiChoice(
-                                                        index = 0,
-                                                        message = OaiMessage(role = "assistant", content = content),
-                                                        finishReason = "stop"
-                                                    )
-                                                ),
-                                                debug = DebugLogger.getRequestLogs()
-                                            )
-                                        )
+                                        call.respond(OaiChatResponse(
+                                            id = "chatcmpl-${System.currentTimeMillis()}",
+                                            created = System.currentTimeMillis() / 1000,
+                                            model = "gemma-4-e2b",
+                                            choices = listOf(OaiChoice(0, OaiMessage("assistant", json.parseToJsonElement(json.encodeToString(content))), "stop")),
+                                            debug = DebugLogger.getRequestLogs()
+                                        ))
                                     }
                                 } catch (e: Exception) {
-                                    DebugLogger.log("Error in /chat/completions: ${e.message}", Log.ERROR, e)
-                                    call.respond(
-                                        HttpStatusCode.BadRequest,
-                                        ErrorResponse(e.message ?: "Bad Request", 400, DebugLogger.getRequestLogs())
-                                    )
+                                    DebugLogger.log("Failed to parse or process request: ${e.message}", Log.ERROR, e)
+                                    call.respond(HttpStatusCode.BadRequest, ErrorResponse("JSON Error: ${e.message}", 400, DebugLogger.getRequestLogs()))
                                 } finally {
                                     DebugLogger.clearRequest()
                                 }
                             }
                         }
 
-                        // ── Legacy routes (kept for backward compat) ─────────
                         post("/chat") {
                             DebugLogger.startRequest()
-                            DebugLogger.log("POST /chat called")
+                            val rawBody = call.receiveText()
+                            DebugLogger.log("POST /chat - RAW BODY: $rawBody")
                             try {
+                                val req = json.decodeFromString<ChatRequest>(rawBody)
                                 val start = System.currentTimeMillis()
-                                val req = call.receive<ChatRequest>()
-                                DebugLogger.log("Received ChatRequest: ${req.message.take(20)}...")
                                 if (!engine.isReady) {
-                                    DebugLogger.log("Engine not ready", Log.WARN)
-                                    call.respond(
-                                        HttpStatusCode.ServiceUnavailable,
-                                        ErrorResponse("Engine not ready", 503, DebugLogger.getRequestLogs())
-                                    )
+                                    call.respond(HttpStatusCode.ServiceUnavailable, ErrorResponse("Engine not ready", 503, DebugLogger.getRequestLogs()))
                                     return@post
                                 }
                                 val tokens = engine.generateText(req.message).toList()
                                 val response = tokens.joinToString("")
                                 val ms = System.currentTimeMillis() - start
-                                DebugLogger.log("Response generated in ${ms}ms")
                                 onRequest(RequestLogEntry(endpoint = "/chat", responseTimeMs = ms, statusCode = 200))
-                                call.respond(
-                                    ChatResponse(
-                                        response = response,
-                                        tokens = tokens.size,
-                                        ms = ms,
-                                        debug = DebugLogger.getRequestLogs()
-                                    )
-                                )
+                                call.respond(ChatResponse(response, tokens.size, ms, DebugLogger.getRequestLogs()))
                             } catch (e: Exception) {
                                 DebugLogger.log("Error in /chat: ${e.message}", Log.ERROR, e)
-                                call.respond(
-                                    HttpStatusCode.InternalServerError,
-                                    ErrorResponse(e.message ?: "Error", 500, DebugLogger.getRequestLogs())
-                                )
+                                call.respond(HttpStatusCode.BadRequest, ErrorResponse(e.message ?: "Error", 400, DebugLogger.getRequestLogs()))
                             } finally {
                                 DebugLogger.clearRequest()
                             }
@@ -265,38 +187,23 @@ class HttpApiServer(
 
                         post("/vision") {
                             DebugLogger.startRequest()
-                            DebugLogger.log("POST /vision called")
+                            val rawBody = call.receiveText()
+                            DebugLogger.log("POST /vision - RAW BODY: $rawBody")
                             try {
+                                val req = json.decodeFromString<VisionRequest>(rawBody)
                                 val start = System.currentTimeMillis()
-                                val req = call.receive<VisionRequest>()
-                                DebugLogger.log("Received VisionRequest: path=${req.imagePath}")
                                 if (!engine.isReady) {
-                                    DebugLogger.log("Engine not ready", Log.WARN)
-                                    call.respond(
-                                        HttpStatusCode.ServiceUnavailable,
-                                        ErrorResponse("Engine not ready", 503, DebugLogger.getRequestLogs())
-                                    )
+                                    call.respond(HttpStatusCode.ServiceUnavailable, ErrorResponse("Engine not ready", 503, DebugLogger.getRequestLogs()))
                                     return@post
                                 }
                                 val tokens = engine.analyzeImage(req.imagePath, req.prompt).toList()
                                 val response = tokens.joinToString("")
                                 val ms = System.currentTimeMillis() - start
-                                DebugLogger.log("Vision analysis finished in ${ms}ms")
                                 onRequest(RequestLogEntry(endpoint = "/vision", responseTimeMs = ms, statusCode = 200))
-                                call.respond(
-                                    ChatResponse(
-                                        response = response,
-                                        tokens = tokens.size,
-                                        ms = ms,
-                                        debug = DebugLogger.getRequestLogs()
-                                    )
-                                )
+                                call.respond(ChatResponse(response, tokens.size, ms, DebugLogger.getRequestLogs()))
                             } catch (e: Exception) {
                                 DebugLogger.log("Error in /vision: ${e.message}", Log.ERROR, e)
-                                call.respond(
-                                    HttpStatusCode.InternalServerError,
-                                    ErrorResponse(e.message ?: "Error", 500, DebugLogger.getRequestLogs())
-                                )
+                                call.respond(HttpStatusCode.BadRequest, ErrorResponse(e.message ?: "Error", 400, DebugLogger.getRequestLogs()))
                             } finally {
                                 DebugLogger.clearRequest()
                             }
@@ -304,13 +211,9 @@ class HttpApiServer(
 
                         post("/reset") {
                             DebugLogger.startRequest()
-                            DebugLogger.log("POST /reset called")
                             engine.clearHistory()
                             onRequest(RequestLogEntry(endpoint = "/reset", responseTimeMs = 0, statusCode = 200))
-                            call.respond(mapOf(
-                                "status" to "conversation cleared",
-                                "debug" to DebugLogger.getRequestLogs()
-                            ))
+                            call.respond(mapOf("status" to "conversation cleared", "debug" to DebugLogger.getRequestLogs()))
                             DebugLogger.clearRequest()
                         }
                     }

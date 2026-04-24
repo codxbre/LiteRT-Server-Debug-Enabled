@@ -11,6 +11,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material3.*
@@ -120,7 +121,7 @@ fun ServerScreen(
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // Debug Logs Section (Taking up most of the space)
+        // Debug Logs Section
         Text("Debug Logs", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
         Spacer(modifier = Modifier.height(8.dp))
         
@@ -137,19 +138,21 @@ fun ServerScreen(
                     Text("No logs yet", color = Color.DarkGray, fontSize = 12.sp)
                 }
             } else {
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize().padding(8.dp),
-                    state = logListState,
-                    verticalArrangement = Arrangement.spacedBy(2.dp)
-                ) {
-                    items(debugLogs) { log ->
-                        Text(
-                            log,
-                            color = if (log.contains("ERROR")) Color(0xFFEF4444) else if (log.contains("WARN")) Color(0xFFFFB74D) else Color(0xFF9CCC65),
-                            fontSize = 10.sp,
-                            fontFamily = FontFamily.Monospace,
-                            lineHeight = 14.sp
-                        )
+                SelectionContainer {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize().padding(8.dp),
+                        state = logListState,
+                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
+                        items(debugLogs) { log ->
+                            Text(
+                                log,
+                                color = if (log.contains("ERROR")) Color(0xFFEF4444) else if (log.contains("WARN")) Color(0xFFFFB74D) else Color(0xFF9CCC65),
+                                fontSize = 10.sp,
+                                fontFamily = FontFamily.Monospace,
+                                lineHeight = 14.sp
+                            )
+                        }
                     }
                 }
             }
