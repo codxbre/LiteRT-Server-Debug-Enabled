@@ -61,6 +61,16 @@ class HttpApiServer(
         }
     }
 
+    /**
+     * Truncates a string to fit within a rough character limit to avoid exceeding token limits.
+     * Note: This is a rough estimation (4 chars per token).
+     */
+    private fun truncatePrompt(prompt: String, maxChars: Int = 12000): String {
+        if (prompt.length <= maxChars) return prompt
+        DebugLogger.log("Prompt too long (${prompt.length} chars), truncating to keep last $maxChars chars", Log.WARN)
+        return "... [truncated] ... " + prompt.takeLast(maxChars)
+    }
+
     fun start(): Int {
         for (tryPort in 8080..8082) {
             try {
@@ -101,7 +111,7 @@ class HttpApiServer(
                             post("/chat/completions") {
                                 DebugLogger.startRequest()
                                 val rawBody = call.receiveText()
-                                DebugLogger.log("POST /v1/chat/completions - RAW BODY: $rawBody")
+                                DebugLogger.log("POST /v1/chat/completions - RAW BODY SIZE: ${rawBody.length}")
                                 
                                 try {
                                     val req = json.decodeFromString<OaiChatRequest>(rawBody)
@@ -113,9 +123,12 @@ class HttpApiServer(
                                     }
 
                                     val start = System.currentTimeMillis()
-                                    val prompt = req.messages.joinToString("\n") {
+                                    // Build prompt and truncate if necessary
+                                    val rawPrompt = req.messages.joinToString("\n") {
                                         "${it.role}: ${it.content.asContentString()}"
                                     } + "\nassistant:"
+                                    
+                                    val prompt = truncatePrompt(rawPrompt)
 
                                     if (req.stream) {
                                         val reqId = "chatcmpl-${System.currentTimeMillis()}"
@@ -153,8 +166,9 @@ class HttpApiServer(
                                         ))
                                     }
                                 } catch (e: Exception) {
-                                    DebugLogger.log("Failed to parse or process request: ${e.message}", Log.ERROR, e)
-                                    call.respond(HttpStatusCode.BadRequest, ErrorResponse("JSON Error: ${e.message}", 400, DebugLogger.getRequestLogs()))
+                                    DebugLogger.log("Failed to process request: ${e.message}", Log.ERROR, e)
+                                    val status = if (e is kotlinx.serialization.SerializationException) HttpStatusCode.BadRequest else HttpStatusCode.InternalServerError
+                                    call.respond(status, ErrorResponse("Error: ${e.message}", status.value, DebugLogger.getRequestLogs()))
                                 } finally {
                                     DebugLogger.clearRequest()
                                 }
@@ -164,7 +178,6 @@ class HttpApiServer(
                         post("/chat") {
                             DebugLogger.startRequest()
                             val rawBody = call.receiveText()
-                            DebugLogger.log("POST /chat - RAW BODY: $rawBody")
                             try {
                                 val req = json.decodeFromString<ChatRequest>(rawBody)
                                 val start = System.currentTimeMillis()
@@ -172,7 +185,7 @@ class HttpApiServer(
                                     call.respond(HttpStatusCode.ServiceUnavailable, ErrorResponse("Engine not ready", 503, DebugLogger.getRequestLogs()))
                                     return@post
                                 }
-                                val tokens = engine.generateText(req.message).toList()
+                                val tokens = engine.generateText(truncatePrompt(req.message)).toList()
                                 val response = tokens.joinToString("")
                                 val ms = System.currentTimeMillis() - start
                                 onRequest(RequestLogEntry(endpoint = "/chat", responseTimeMs = ms, statusCode = 200))
@@ -188,7 +201,6 @@ class HttpApiServer(
                         post("/vision") {
                             DebugLogger.startRequest()
                             val rawBody = call.receiveText()
-                            DebugLogger.log("POST /vision - RAW BODY: $rawBody")
                             try {
                                 val req = json.decodeFromString<VisionRequest>(rawBody)
                                 val start = System.currentTimeMillis()
@@ -196,7 +208,7 @@ class HttpApiServer(
                                     call.respond(HttpStatusCode.ServiceUnavailable, ErrorResponse("Engine not ready", 503, DebugLogger.getRequestLogs()))
                                     return@post
                                 }
-                                val tokens = engine.analyzeImage(req.imagePath, req.prompt).toList()
+                                val tokens = engine.analyzeImage(req.imagePath, truncatePrompt(req.prompt)).toList()
                                 val response = tokens.joinToString("")
                                 val ms = System.currentTimeMillis() - start
                                 onRequest(RequestLogEntry(endpoint = "/vision", responseTimeMs = ms, statusCode = 200))
