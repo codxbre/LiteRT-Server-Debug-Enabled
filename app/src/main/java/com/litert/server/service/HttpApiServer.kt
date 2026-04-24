@@ -61,10 +61,6 @@ class HttpApiServer(
         }
     }
 
-    /**
-     * Truncates a string to fit within a rough character limit to avoid exceeding token limits.
-     * Note: This is a rough estimation (4 chars per token).
-     */
     private fun truncatePrompt(prompt: String, maxChars: Int = 12000): String {
         if (prompt.length <= maxChars) return prompt
         DebugLogger.log("Prompt too long (${prompt.length} chars), truncating to keep last $maxChars chars", Log.WARN)
@@ -123,7 +119,6 @@ class HttpApiServer(
                                     }
 
                                     val start = System.currentTimeMillis()
-                                    // Build prompt and truncate if necessary
                                     val rawPrompt = req.messages.joinToString("\n") {
                                         "${it.role}: ${it.content.asContentString()}"
                                     } + "\nassistant:"

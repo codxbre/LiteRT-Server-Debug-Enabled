@@ -18,7 +18,7 @@ data class OaiChatRequest(
 @Serializable
 data class OaiMessage(
     val role: String,
-    val content: JsonElement // Use JsonElement to handle both String and Array/Object content
+    val content: JsonElement
 )
 
 @Serializable
