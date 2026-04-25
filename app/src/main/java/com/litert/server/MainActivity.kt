@@ -89,7 +89,7 @@ class MainActivity : ComponentActivity() {
         override fun onReceive(context: Context, intent: Intent) {
             when (intent.action) {
                 LLMForegroundService.ACTION_ENGINE_READY -> {
-                    val port = intent.getIntExtra(LLMForegroundService.EXTRA_SERVER_PORT, 8080)
+                    val port = intent.getIntExtra(LLMForegroundService.EXTRA_SERVER_PORT, 8999)
                     val isGpu = intent.getBooleanExtra(LLMForegroundService.EXTRA_IS_GPU, true)
                     com.litert.server.util.DebugLogger.log("MainActivity: Received ENGINE_READY on port $port")
                     // Grab the engine reference from the service singleton

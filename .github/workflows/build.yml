@@ -10,6 +10,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 480
 
     steps:
       - name: Checkout code
@@ -23,13 +24,6 @@ jobs:
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
-
-      - name: Download gradle-wrapper.jar
-        run: |
-          mkdir -p gradle/wrapper
-          curl -fsSL \
-            -o gradle/wrapper/gradle-wrapper.jar \
-            https://raw.githubusercontent.com/gradle/gradle/v8.9.0/gradle/wrapper/gradle-wrapper.jar
 
       - name: Make gradlew executable
         run: chmod +x gradlew

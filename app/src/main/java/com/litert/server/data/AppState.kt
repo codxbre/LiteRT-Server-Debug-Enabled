@@ -20,7 +20,7 @@ data class AppState(
     val etaSeconds: Int = 0,
     val errorMessage: String? = null,
     val isServerRunning: Boolean = false,
-    val serverPort: Int = 8080,
+    val serverPort: Int = 8999,
     val isGpuBackend: Boolean = true,
     val engineReady: Boolean = false,
     val requestLog: List<RequestLogEntry> = emptyList()

@@ -48,7 +48,7 @@ class HttpApiServer(
     private val onRequest: (RequestLogEntry) -> Unit
 ) {
     private var server: ApplicationEngine? = null
-    var port: Int = 8080
+    var port: Int = 8999
         private set
 
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
@@ -68,9 +68,11 @@ class HttpApiServer(
     }
 
     fun start(): Int {
-        for (tryPort in 8080..8082) {
+        for (tryPort in 8999..9001) {
             try {
-                server = embeddedServer(CIO, port = tryPort) {
+                server = embeddedServer(CIO, port = tryPort, configure = {
+                    connectionIdleTimeoutSeconds = 28800
+                }) {
                     install(ContentNegotiation) {
                         json(json)
                     }
@@ -231,10 +233,10 @@ class HttpApiServer(
                 return tryPort
             } catch (e: Exception) {
                 DebugLogger.log("Failed to start server on port $tryPort: ${e.message}", Log.WARN)
-                if (tryPort == 8082) throw e
+                if (tryPort == 9001) throw e
             }
         }
-        throw IllegalStateException("Could not bind to any port (8080-8082)")
+        throw IllegalStateException("Could not bind to any port (8999-9001)")
     }
 
     fun stop() {

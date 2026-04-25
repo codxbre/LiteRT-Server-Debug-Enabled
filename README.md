@@ -20,7 +20,7 @@ app/src/main/java/com/litert/server/
 ├── engine/LiteRTEngine.kt       — LiteRT-LM SDK wrapper (GPU/CPU backend)
 ├── service/
 │   ├── LLMForegroundService.kt  — Android foreground service (START_STICKY)
-│   └── HttpApiServer.kt         — Ktor CIO embedded HTTP server on port 8080
+│   └── HttpApiServer.kt         — Ktor CIO embedded HTTP server on port 8999
 └── ui/
     ├── ChatScreen.kt            — Text chat with streaming tokens
     ├── VisionScreen.kt          — Image + text analysis
@@ -36,26 +36,26 @@ app/src/main/java/com/litert/server/
 3. Build and install on your device: `./gradlew installDebug`
 4. On first launch the app will prompt you to download the model (~2.58 GB from HuggingFace)
 
-## HTTP API (Ktor on localhost:8080)
+## HTTP API (Ktor on localhost:8999)
 
 Once the model is loaded and the server is running:
 
 ```bash
 # Health check
-curl http://localhost:8080/health
+curl http://localhost:8999/health
 
 # Chat
-curl -X POST http://localhost:8080/chat \
+curl -X POST http://localhost:8999/chat \
   -H "Content-Type: application/json" \
   -d '{"message":"Hello!"}'
 
 # Vision (image analysis)
-curl -X POST http://localhost:8080/vision \
+curl -X POST http://localhost:8999/vision \
   -H "Content-Type: application/json" \
   -d '{"imagePath":"/sdcard/DCIM/photo.jpg","prompt":"Describe this image"}'
 
 # Reset conversation history
-curl -X POST http://localhost:8080/reset
+curl -X POST http://localhost:8999/reset
 ```
 
 ## GPU Acceleration

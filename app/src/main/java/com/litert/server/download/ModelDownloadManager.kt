@@ -55,7 +55,7 @@ class ModelDownloadManager(private val context: Context) {
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(120, TimeUnit.SECONDS)
+        .readTimeout(8, TimeUnit.HOURS)
         .build()
 
     private var activeVariant: GemmaVariant = GemmaVariant.E2B
