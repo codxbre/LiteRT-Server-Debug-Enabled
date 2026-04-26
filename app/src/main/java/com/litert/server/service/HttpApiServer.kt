@@ -135,7 +135,14 @@ class HttpApiServer(
                                             write("data: ${json.encodeToString(firstChunk)}\n\n")
                                             flush()
 
+                                            var lastHeartbeat = System.currentTimeMillis()
                                             engine.generateText(prompt).collect { token ->
+                                                val now = System.currentTimeMillis()
+                                                if (now - lastHeartbeat > 20000) {
+                                                    write(": heartbeat\n\n")
+                                                    flush()
+                                                    lastHeartbeat = now
+                                                }
                                                 val chunk = OaiStreamChunk(reqId, created = System.currentTimeMillis() / 1000, model = "gemma-4-e2b", 
                                                     choices = listOf(OaiStreamChoice(0, OaiDelta(content = token))))
                                                 write("data: ${json.encodeToString(chunk)}\n\n")
