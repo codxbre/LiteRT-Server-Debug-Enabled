@@ -72,7 +72,6 @@ class HttpApiServer(
             try {
                 server = embeddedServer(CIO, port = tryPort, configure = {
                     connectionIdleTimeoutSeconds = 28800
-                    requestTimeoutSeconds = 28800
                 }) {
                     install(ContentNegotiation) {
                         json(json)
