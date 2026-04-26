@@ -28,6 +28,6 @@ class SettingsManager(context: Context) {
 
     // Context window is usually fixed by the model, but we can store a preference for it
     var contextWindow: Int
-        get() = prefs.getInt("context_window", 16384)
+        get() = prefs.getInt("context_window", 32768)
         set(value) = prefs.edit().putInt("context_window", value).apply()
 }
