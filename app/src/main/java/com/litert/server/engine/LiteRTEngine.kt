@@ -26,6 +26,7 @@ class LiteRTEngine(private val context: Context) {
         topP = 0.9,
         temperature = 0.7
     )
+    private var currentMaxTokens: Int = 4096
 
     var isReady = false
         private set
@@ -34,13 +35,14 @@ class LiteRTEngine(private val context: Context) {
         modelPath: String,
         useGpu: Boolean = true,
         temperature: Double = 0.7,
-        maxTokens: Int = 1024,
+        maxTokens: Int = 4096,
         topK: Int = 40,
-        topP: Double = 0.9
+        topP: Double = 0.9,
+        contextWindow: Int = 16384
     ): Boolean {
         return withContext(Dispatchers.IO) {
             try {
-                DebugLogger.log("Engine.initialize: modelPath=$modelPath, useGpu=$useGpu")
+                DebugLogger.log("Engine.initialize: model=$modelPath, gpu=$useGpu, ctx=$contextWindow, maxOut=$maxTokens")
                 val backend = if (useGpu) Backend.GPU() else Backend.CPU()
                 val visionBackend = if (useGpu) Backend.GPU() else Backend.CPU()
 
@@ -48,29 +50,31 @@ class LiteRTEngine(private val context: Context) {
                     modelPath = modelPath,
                     backend = backend,
                     visionBackend = visionBackend,
-                    cacheDir = context.cacheDir.absolutePath
+                    cacheDir = context.cacheDir.absolutePath,
+                    maxNumTokens = contextWindow
                 )
-                DebugLogger.log("Creating Engine with config: model=$modelPath")
+                
+                DebugLogger.log("Creating Engine...")
                 val newEngine = Engine(config)
-                DebugLogger.log("Calling Engine.initialize()...")
                 newEngine.initialize()
-                DebugLogger.log("Engine.initialize() done.")
+                DebugLogger.log("Engine initialized.")
 
                 currentSamplerConfig = SamplerConfig(topK = topK, topP = topP, temperature = temperature)
-                DebugLogger.log("Creating conversation with samplerConfig: topK=$topK, topP=$topP, temp=$temperature")
+                currentMaxTokens = maxTokens
+                
                 val conv = createNewConversation(newEngine, currentSamplerConfig)
 
                 engine = newEngine
                 conversation = conv
                 currentBackend = if (useGpu) "GPU" else "CPU"
                 isReady = true
-                DebugLogger.log("Engine initialized successfully with $currentBackend backend")
+                DebugLogger.log("Engine ready on $currentBackend")
                 true
             } catch (e: Exception) {
-                DebugLogger.log("Failed to initialize engine", Log.ERROR, e)
+                DebugLogger.log("Init failed: ${e.message}", Log.ERROR, e)
                 if (useGpu) {
-                    DebugLogger.log("Falling back to CPU backend...")
-                    initialize(modelPath, useGpu = false, temperature, maxTokens, topK, topP)
+                    DebugLogger.log("Falling back to CPU...")
+                    initialize(modelPath, false, temperature, maxTokens, topK, topP, contextWindow)
                 } else {
                     isReady = false
                     false
@@ -83,7 +87,6 @@ class LiteRTEngine(private val context: Context) {
         eng: Engine,
         samplerConfig: SamplerConfig
     ): com.google.ai.edge.litertlm.Conversation {
-        DebugLogger.log("createNewConversation called")
         return eng.createConversation(
             ConversationConfig(
                 systemInstruction = Contents.of(
@@ -98,47 +101,32 @@ class LiteRTEngine(private val context: Context) {
     }
 
     suspend fun generateText(prompt: String): Flow<String> {
-        DebugLogger.log("generateText called with prompt length: ${prompt.length}")
-        val conv = conversation ?: run {
-            DebugLogger.log("generateText failed: Engine not initialized", Log.ERROR)
-            throw IllegalStateException("Engine not initialized")
-        }
+        val conv = conversation ?: throw IllegalStateException("Engine not initialized")
+        // We can't pass maxTokens to sendMessageAsync directly in current SDK, 
+        // it's usually handled by the EngineConfig's maxNumTokens as a total limit.
         return conv.sendMessageAsync(prompt)
-            .onEach { DebugLogger.log("Token: $it") }
             .map { it.toString() }
     }
 
-    /**
-     * Passes the image file + prompt as proper multimodal content.
-     * imagePath must be an absolute file path readable by the engine.
-     */
     suspend fun analyzeImage(imagePath: String, prompt: String): Flow<String> {
-        DebugLogger.log("analyzeImage called: path=$imagePath, prompt=$prompt")
-        val conv = conversation ?: run {
-            DebugLogger.log("analyzeImage failed: Engine not initialized", Log.ERROR)
-            throw IllegalStateException("Engine not initialized")
-        }
+        val conv = conversation ?: throw IllegalStateException("Engine not initialized")
         val contents = Contents.of(
             Content.ImageFile(imagePath),
             Content.Text(prompt)
         )
         return conv.sendMessageAsync(contents)
-            .onEach { DebugLogger.log("Vision Token: $it") }
             .map { it.toString() }
     }
 
     fun clearHistory() {
-        DebugLogger.log("clearHistory called")
         val eng = engine ?: return
         conversation?.close()
         conversation = createNewConversation(eng, currentSamplerConfig)
-        DebugLogger.log("Conversation history cleared")
     }
 
     fun getBackend(): String = currentBackend
 
     fun shutdown() {
-        DebugLogger.log("Engine shutdown called")
         isReady = false
         conversation?.close()
         conversation = null

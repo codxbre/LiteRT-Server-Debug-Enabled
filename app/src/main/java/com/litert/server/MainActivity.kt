@@ -235,8 +235,15 @@ class MainActivity : ComponentActivity() {
                     )
                     3 -> SettingsScreen(
                         modelPath = downloadManager.getModelPath(),
-                        isGpu = appState.isGpuBackend,
-                        onClearCache = { downloadManager.deleteModel(); checkModelAndUpdateState() }
+                        onClearCache = { downloadManager.deleteModel(); checkModelAndUpdateState() },
+                        onSaveAndRestart = {
+                            if (appState.isServerRunning) {
+                                toggleServer() // Stop
+                                toggleServer() // Start
+                            } else {
+                                Toast.makeText(this@MainActivity, "Settings saved", Toast.LENGTH_SHORT).show()
+                            }
+                        }
                     )
                 }
             }

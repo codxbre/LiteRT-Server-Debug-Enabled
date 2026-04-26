@@ -7,24 +7,34 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Save
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.litert.server.util.SettingsManager
 
 @Composable
 fun SettingsScreen(
     modelPath: String,
-    isGpu: Boolean,
-    onClearCache: () -> Unit
+    onClearCache: () -> Unit,
+    onSaveAndRestart: () -> Unit
 ) {
-    var temperature by remember { mutableFloatStateOf(0.7f) }
-    var maxTokens by remember { mutableFloatStateOf(1024f) }
-    var useGpu by remember { mutableStateOf(isGpu) }
+    val context = LocalContext.current
+    val settingsManager = remember { SettingsManager(context) }
+    
+    var temperature by remember { mutableFloatStateOf(settingsManager.temperature) }
+    var maxTokens by remember { mutableFloatStateOf(settingsManager.maxTokens.toFloat()) }
+    var topK by remember { mutableFloatStateOf(settingsManager.topK.toFloat()) }
+    var topP by remember { mutableFloatStateOf(settingsManager.topP) }
+    var contextWindow by remember { mutableFloatStateOf(settingsManager.contextWindow.toFloat()) }
+    var useGpu by remember { mutableStateOf(settingsManager.useGpu) }
+    
     var showDeleteDialog by remember { mutableStateOf(false) }
 
     Column(
@@ -34,7 +44,32 @@ fun SettingsScreen(
             .verticalScroll(rememberScrollState())
             .padding(16.dp)
     ) {
-        Text("Settings", color = Color.White, style = MaterialTheme.typography.titleLarge)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("Settings", color = Color.White, style = MaterialTheme.typography.titleLarge)
+            Button(
+                onClick = {
+                    settingsManager.temperature = temperature
+                    settingsManager.maxTokens = maxTokens.toInt()
+                    settingsManager.topK = topK.toInt()
+                    settingsManager.topP = topP
+                    settingsManager.contextWindow = contextWindow.toInt()
+                    settingsManager.useGpu = useGpu
+                    onSaveAndRestart()
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = GreenPrimary),
+                shape = RoundedCornerShape(8.dp),
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
+            ) {
+                Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Save & Restart", fontSize = 14.sp)
+            }
+        }
+        
         Spacer(modifier = Modifier.height(24.dp))
 
         SettingsCard {
@@ -87,10 +122,6 @@ fun SettingsScreen(
                     inactiveTrackColor = Color(0xFF333333)
                 )
             )
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("0.1", color = Color.Gray, fontSize = 11.sp)
-                Text("1.0", color = Color.Gray, fontSize = 11.sp)
-            }
         }
 
         Spacer(modifier = Modifier.height(12.dp))
@@ -100,27 +131,90 @@ fun SettingsScreen(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Text("Max Tokens", color = Color.White, fontWeight = FontWeight.SemiBold)
+                Text("Max Tokens (Output)", color = Color.White, fontWeight = FontWeight.SemiBold)
                 Text("${maxTokens.toInt()}", color = GreenPrimary)
             }
             Slider(
                 value = maxTokens,
                 onValueChange = { maxTokens = it },
-                valueRange = 128f..2048f,
-                steps = 14,
+                valueRange = 128f..16384f,
                 colors = SliderDefaults.colors(
                     thumbColor = GreenPrimary,
                     activeTrackColor = GreenPrimary,
                     inactiveTrackColor = Color(0xFF333333)
                 )
             )
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("128", color = Color.Gray, fontSize = 11.sp)
-                Text("2048", color = Color.Gray, fontSize = 11.sp)
-            }
+            Text("Maximum tokens the model can generate in a single response.", color = Color.Gray, fontSize = 11.sp)
         }
 
         Spacer(modifier = Modifier.height(12.dp))
+
+        SettingsCard {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text("Context Window", color = Color.White, fontWeight = FontWeight.SemiBold)
+                Text("${contextWindow.toInt()}", color = GreenPrimary)
+            }
+            Slider(
+                value = contextWindow,
+                onValueChange = { contextWindow = it },
+                valueRange = 1024f..32768f,
+                colors = SliderDefaults.colors(
+                    thumbColor = GreenPrimary,
+                    activeTrackColor = GreenPrimary,
+                    inactiveTrackColor = Color(0xFF333333)
+                )
+            )
+            Text("Total capacity for prompt + response tokens.", color = Color.Gray, fontSize = 11.sp)
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+        
+        SettingsCard {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text("Top P", color = Color.White, fontWeight = FontWeight.SemiBold)
+                Text("${"%.2f".format(topP)}", color = GreenPrimary)
+            }
+            Slider(
+                value = topP,
+                onValueChange = { topP = it },
+                valueRange = 0.1f..1.0f,
+                colors = SliderDefaults.colors(
+                    thumbColor = GreenPrimary,
+                    activeTrackColor = GreenPrimary,
+                    inactiveTrackColor = Color(0xFF333333)
+                )
+            )
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        SettingsCard {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text("Top K", color = Color.White, fontWeight = FontWeight.SemiBold)
+                Text("${topK.toInt()}", color = GreenPrimary)
+            }
+            Slider(
+                value = topK,
+                onValueChange = { topK = it },
+                valueRange = 1f..100f,
+                colors = SliderDefaults.colors(
+                    thumbColor = GreenPrimary,
+                    activeTrackColor = GreenPrimary,
+                    inactiveTrackColor = Color(0xFF333333)
+                )
+            )
+        }
+
+        Spacer(modifier = Modifier.height(24.dp))
 
         OutlinedButton(
             onClick = { showDeleteDialog = true },
@@ -137,6 +231,7 @@ fun SettingsScreen(
         Spacer(modifier = Modifier.height(24.dp))
         Text("LiteRT Server v1.0", color = Color.Gray, fontSize = 12.sp)
         Text("Gemma 4 E2B · LiteRT-LM SDK 0.10.0", color = Color.Gray, fontSize = 12.sp)
+        Text("Optimized for 12GB RAM + 12GB Swap", color = Color.Gray, fontSize = 12.sp)
     }
 
     if (showDeleteDialog) {

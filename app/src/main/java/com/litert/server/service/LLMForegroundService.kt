@@ -11,6 +11,7 @@ import androidx.core.app.ServiceCompat
 import com.litert.server.data.RequestLogEntry
 import com.litert.server.engine.LiteRTEngine
 import com.litert.server.util.DebugLogger
+import com.litert.server.util.SettingsManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -53,7 +54,8 @@ class LLMForegroundService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val modelPath = intent?.getStringExtra(EXTRA_MODEL_PATH) ?: return START_NOT_STICKY
-        val useGpu = intent.getBooleanExtra(EXTRA_USE_GPU, true)
+        val settingsManager = SettingsManager(applicationContext)
+        val useGpu = settingsManager.useGpu
         DebugLogger.log("Service onStartCommand: model=$modelPath, gpu=$useGpu")
 
         startAsForeground()
@@ -64,7 +66,15 @@ class LLMForegroundService : Service() {
                 val engine = LiteRTEngine(applicationContext)
                 llmEngine = engine
 
-                val success = engine.initialize(modelPath, useGpu)
+                val success = engine.initialize(
+                    modelPath = modelPath,
+                    useGpu = useGpu,
+                    temperature = settingsManager.temperature.toDouble(),
+                    maxTokens = settingsManager.maxTokens,
+                    topK = settingsManager.topK,
+                    topP = settingsManager.topP.toDouble(),
+                    contextWindow = settingsManager.contextWindow
+                )
                 if (!success) {
                     DebugLogger.log("Engine initialization failed", Log.ERROR)
                     broadcastError("Failed to initialize LLM engine")
