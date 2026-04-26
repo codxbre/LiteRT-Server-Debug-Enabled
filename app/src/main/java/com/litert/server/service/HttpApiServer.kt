@@ -37,6 +37,7 @@ import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.route
 import io.ktor.server.routing.routing
+import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.toList
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -62,6 +63,10 @@ class HttpApiServer(
     }
 
     private fun truncatePrompt(prompt: String, maxChars: Int = 64000): String {
+        val runtime = Runtime.getRuntime()
+        val usedMem = (runtime.totalMemory() - runtime.freeMemory()) / 1024 / 1024
+        DebugLogger.log("Memory Usage: ${usedMem}MB / ${runtime.maxMemory() / 1024 / 1024}MB")
+        
         if (prompt.length <= maxChars) return prompt
         DebugLogger.log("Prompt too long (${prompt.length} chars), truncating to keep last $maxChars chars", Log.WARN)
         return "... [truncated] ... " + prompt.takeLast(maxChars)
@@ -135,18 +140,29 @@ class HttpApiServer(
                                             write("data: ${json.encodeToString(firstChunk)}\n\n")
                                             flush()
 
-                                            var lastHeartbeat = System.currentTimeMillis()
-                                            engine.generateText(prompt).collect { token ->
-                                                val now = System.currentTimeMillis()
-                                                if (now - lastHeartbeat > 5000) {
-                                                    write(": heartbeat\n\n")
-                                                    flush()
-                                                    lastHeartbeat = now
+                                            coroutineScope {
+                                                val heartbeatJob = launch {
+                                                    while (isActive) {
+                                                        delay(5000)
+                                                        try {
+                                                            write(": heartbeat\n\n")
+                                                            flush()
+                                                        } catch (e: Exception) {
+                                                            break
+                                                        }
+                                                    }
                                                 }
-                                                val chunk = OaiStreamChunk(reqId, created = System.currentTimeMillis() / 1000, model = "gemma-4-e2b", 
-                                                    choices = listOf(OaiStreamChoice(0, OaiDelta(content = token))))
-                                                write("data: ${json.encodeToString(chunk)}\n\n")
-                                                flush()
+
+                                                try {
+                                                    engine.generateText(prompt).collect { token ->
+                                                        val chunk = OaiStreamChunk(reqId, created = System.currentTimeMillis() / 1000, model = "gemma-4-e2b", 
+                                                            choices = listOf(OaiStreamChoice(0, OaiDelta(content = token))))
+                                                        write("data: ${json.encodeToString(chunk)}\n\n")
+                                                        flush()
+                                                    }
+                                                } finally {
+                                                    heartbeatJob.cancel()
+                                                }
                                             }
 
                                             val stopChunk = OaiStreamChunk(reqId, created = System.currentTimeMillis() / 1000, model = "gemma-4-e2b", 
