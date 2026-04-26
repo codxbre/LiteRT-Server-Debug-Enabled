@@ -61,7 +61,7 @@ class HttpApiServer(
         }
     }
 
-    private fun truncatePrompt(prompt: String, maxChars: Int = 12000): String {
+    private fun truncatePrompt(prompt: String, maxChars: Int = 64000): String {
         if (prompt.length <= maxChars) return prompt
         DebugLogger.log("Prompt too long (${prompt.length} chars), truncating to keep last $maxChars chars", Log.WARN)
         return "... [truncated] ... " + prompt.takeLast(maxChars)
@@ -72,6 +72,7 @@ class HttpApiServer(
             try {
                 server = embeddedServer(CIO, port = tryPort, configure = {
                     connectionIdleTimeoutSeconds = 28800
+                    requestTimeoutSeconds = 28800
                 }) {
                     install(ContentNegotiation) {
                         json(json)
