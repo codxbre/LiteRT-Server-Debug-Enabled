@@ -12,8 +12,8 @@ android {
         applicationId = "com.litert.server"
         minSdk = 26
         targetSdk = 35
-        versionCode = 7
-        versionName = "1.6"
+        versionCode = 8
+        versionName = "1.7"
     }
     buildFeatures { compose = true }
     compileOptions {

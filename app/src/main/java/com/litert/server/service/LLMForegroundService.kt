@@ -17,6 +17,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import java.io.File
+import java.io.FileOutputStream
+import java.io.PrintWriter
+import java.io.StringWriter
+import java.util.Date
 
 class LLMForegroundService : Service() {
 
@@ -47,6 +52,27 @@ class LLMForegroundService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        
+        val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+            try {
+                val sw = StringWriter()
+                throwable.printStackTrace(PrintWriter(sw))
+                val stackTrace = sw.toString()
+                
+                val logFile = File(getExternalFilesDir(null), "crash_log.txt")
+                FileOutputStream(logFile, true).use { fos ->
+                    val header = "\n\n--- CRASH AT ${Date()} ---\n"
+                    fos.write(header.toByteArray())
+                    fos.write(stackTrace.toByteArray())
+                }
+                Log.e(TAG, "FATAL CRASH LOGGED TO ${logFile.absolutePath}")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to log crash", e)
+            }
+            defaultHandler?.uncaughtException(thread, throwable)
+        }
+
         DebugLogger.init(applicationContext)
         DebugLogger.log("LLMForegroundService created")
         createNotificationChannel()

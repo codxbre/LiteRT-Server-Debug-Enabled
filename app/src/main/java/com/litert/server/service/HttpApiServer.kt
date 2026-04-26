@@ -138,7 +138,7 @@ class HttpApiServer(
                                             var lastHeartbeat = System.currentTimeMillis()
                                             engine.generateText(prompt).collect { token ->
                                                 val now = System.currentTimeMillis()
-                                                if (now - lastHeartbeat > 20000) {
+                                                if (now - lastHeartbeat > 5000) {
                                                     write(": heartbeat\n\n")
                                                     flush()
                                                     lastHeartbeat = now
