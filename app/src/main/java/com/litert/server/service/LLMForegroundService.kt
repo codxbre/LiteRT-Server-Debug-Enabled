@@ -3,6 +3,7 @@ package com.litert.server.service
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.ActivityManager
 import android.app.Service
 import android.content.Intent
 import android.os.IBinder
@@ -16,7 +17,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.isActive
 import java.io.File
 import java.io.FileOutputStream
 import java.io.PrintWriter
@@ -78,6 +81,25 @@ class LLMForegroundService : Service() {
         createNotificationChannel()
     }
 
+    private fun logResourceUsage() {
+        try {
+            val runtime = Runtime.getRuntime()
+            val usedMem = (runtime.totalMemory() - runtime.freeMemory()) / 1024 / 1024
+            val totalMem = runtime.totalMemory() / 1024 / 1024
+            val maxMem = runtime.maxMemory() / 1024 / 1024
+
+            val am = getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+            val memInfo = ActivityManager.MemoryInfo()
+            am.getMemoryInfo(memInfo)
+            val availSystemMem = memInfo.availMem / 1024 / 1024
+            val totalSystemMem = memInfo.totalMem / 1024 / 1024
+
+            DebugLogger.log("RESOURCE MONITOR - JVM: ${usedMem}MB/${totalMem}MB (Max:${maxMem}MB) | System: ${availSystemMem}MB/${totalSystemMem}MB Free")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to log resources", e)
+        }
+    }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val modelPath = intent?.getStringExtra(EXTRA_MODEL_PATH) ?: return START_NOT_STICKY
         val settingsManager = SettingsManager(applicationContext)
@@ -87,6 +109,13 @@ class LLMForegroundService : Service() {
         startAsForeground()
 
         scope.launch {
+            val monitorJob = launch {
+                while (isActive) {
+                    logResourceUsage()
+                    delay(10000)
+                }
+            }
+
             try {
                 DebugLogger.log("Initializing LiteRTEngine...")
                 val engine = LiteRTEngine(applicationContext)
@@ -101,13 +130,17 @@ class LLMForegroundService : Service() {
                     topP = settingsManager.topP.toDouble(),
                     contextWindow = settingsManager.contextWindow
                 )
+
+                monitorJob.cancel() // Stop monitoring after init
+                logResourceUsage() // Final log
+
                 if (!success) {
                     DebugLogger.log("Engine initialization failed", Log.ERROR)
                     broadcastError("Failed to initialize LLM engine")
                     return@launch
                 }
                 DebugLogger.log("Engine initialization successful")
-
+    ...
                 val requestLog = mutableListOf<RequestLogEntry>()
                 val server = HttpApiServer(engine) { entry ->
                     synchronized(requestLog) { requestLog.add(entry) }

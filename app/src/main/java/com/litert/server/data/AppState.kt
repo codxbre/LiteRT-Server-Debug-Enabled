@@ -3,6 +3,7 @@ package com.litert.server.data
 import kotlinx.serialization.Serializable
 
 enum class AppStatus {
+    CONFIGURING,
     MODEL_NOT_FOUND,
     DOWNLOADING,
     DOWNLOAD_ERROR,
@@ -12,7 +13,7 @@ enum class AppStatus {
 }
 
 data class AppState(
-    val status: AppStatus = AppStatus.MODEL_NOT_FOUND,
+    val status: AppStatus = AppStatus.CONFIGURING,
     val downloadProgress: Float = 0f,
     val downloadedMb: Float = 0f,
     val totalMb: Float = 2643f,

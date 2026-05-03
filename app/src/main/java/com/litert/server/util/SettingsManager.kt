@@ -30,4 +30,8 @@ class SettingsManager(context: Context) {
     var contextWindow: Int
         get() = prefs.getInt("context_window", 16384)
         set(value) = prefs.edit().putInt("context_window", value).apply()
+
+    var modelVariant: String
+        get() = prefs.getString("model_variant", "E2B") ?: "E2B"
+        set(value) = prefs.edit().putString("model_variant", value).apply()
 }

@@ -14,12 +14,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Api
 import androidx.compose.material.icons.filled.Chat
@@ -36,6 +31,7 @@ import com.litert.server.download.GemmaVariant
 import com.litert.server.download.ModelDownloadManager
 import com.litert.server.service.LLMForegroundService
 import com.litert.server.ui.*
+import com.litert.server.util.SettingsManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.onCompletion
@@ -46,19 +42,16 @@ import java.io.File
 class MainActivity : ComponentActivity() {
 
     private lateinit var downloadManager: ModelDownloadManager
+    private lateinit var settingsManager: SettingsManager
     private var appState by mutableStateOf(AppState())
     private var chatMessages = mutableStateListOf<ChatMessage>()
     private var isGenerating by mutableStateOf(false)
     private var visionResult by mutableStateOf("")
     private var isAnalyzing by mutableStateOf(false)
-    private var selectedTab by mutableIntStateOf(0)
-    private var selectedVariant by mutableStateOf(GemmaVariant.E2B)
+    private var selectedTab by mutableIntStateOf(3) // Default to Settings
 
-    // Holds reference to the engine once the service boots it.
-    // We bind to the service via a shared singleton so the UI can call it directly.
     private var liteRTEngine: com.litert.server.engine.LiteRTEngine? = null
 
-    // ── File picker ───────────────────────────────────────────────────────
     private val pickFileLauncher = registerForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
@@ -91,8 +84,6 @@ class MainActivity : ComponentActivity() {
                 LLMForegroundService.ACTION_ENGINE_READY -> {
                     val port = intent.getIntExtra(LLMForegroundService.EXTRA_SERVER_PORT, 8999)
                     val isGpu = intent.getBooleanExtra(LLMForegroundService.EXTRA_IS_GPU, true)
-                    com.litert.server.util.DebugLogger.log("MainActivity: Received ENGINE_READY on port $port")
-                    // Grab the engine reference from the service singleton
                     liteRTEngine = LLMForegroundService.engineInstance
                     appState = appState.copy(
                         status = AppStatus.READY,
@@ -101,10 +92,10 @@ class MainActivity : ComponentActivity() {
                         isGpuBackend = isGpu,
                         engineReady = true
                     )
+                    selectedTab = 0 // Switch to Chat when ready
                 }
                 LLMForegroundService.ACTION_ENGINE_ERROR -> {
                     val msg = intent.getStringExtra(LLMForegroundService.EXTRA_ERROR_MESSAGE)
-                    com.litert.server.util.DebugLogger.log("MainActivity: Received ENGINE_ERROR: $msg", android.util.Log.ERROR)
                     appState = appState.copy(status = AppStatus.ERROR, errorMessage = msg)
                 }
             }
@@ -113,19 +104,18 @@ class MainActivity : ComponentActivity() {
 
     private val notificationPermission = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
-    ) { /* handle result */ }
+    ) { }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
         downloadManager = ModelDownloadManager(this)
+        settingsManager = SettingsManager(this)
 
         val filter = IntentFilter().apply {
             addAction(LLMForegroundService.ACTION_ENGINE_READY)
             addAction(LLMForegroundService.ACTION_ENGINE_ERROR)
         }
         registerReceiver(engineReceiver, filter, RECEIVER_NOT_EXPORTED)
-
         notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
 
         val pm = getSystemService(PowerManager::class.java)
@@ -135,8 +125,7 @@ class MainActivity : ComponentActivity() {
             })
         }
 
-        checkModelAndUpdateState()
-
+        // We don't call checkModelAndUpdateState() here anymore to avoid auto-loading
         setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
                 AppContent()
@@ -147,6 +136,7 @@ class MainActivity : ComponentActivity() {
     @Composable
     fun AppContent() {
         when (appState.status) {
+            AppStatus.CONFIGURING -> MainTabLayout()
             AppStatus.MODEL_NOT_FOUND, AppStatus.DOWNLOADING, AppStatus.DOWNLOAD_ERROR, AppStatus.INITIALIZING -> {
                 DownloadScreen(
                     status = appState.status,
@@ -156,11 +146,10 @@ class MainActivity : ComponentActivity() {
                     speedMbps = appState.downloadSpeedMbps,
                     etaSeconds = appState.etaSeconds,
                     errorMessage = appState.errorMessage,
-                    selectedVariant = selectedVariant,
+                    selectedVariant = GemmaVariant.valueOf(settingsManager.modelVariant),
                     onVariantSelected = { variant ->
-                        selectedVariant = variant
+                        settingsManager.modelVariant = variant.name
                         downloadManager.setVariant(variant)
-                        checkModelAndUpdateState()
                     },
                     onDownload = ::startDownload,
                     onRetry = ::startDownload,
@@ -173,7 +162,9 @@ class MainActivity : ComponentActivity() {
                     Column(modifier = Modifier.padding(24.dp)) {
                         Text("Error: ${appState.errorMessage}", color = Color(0xFFEF4444))
                         Spacer(modifier = Modifier.height(8.dp))
-                        Button(onClick = ::checkModelAndUpdateState) { Text("Retry") }
+                        Button(onClick = { appState = appState.copy(status = AppStatus.CONFIGURING) }) { 
+                            Text("Back to Settings") 
+                        }
                     }
                 }
             }
@@ -183,12 +174,7 @@ class MainActivity : ComponentActivity() {
     @Composable
     fun MainTabLayout() {
         val tabs = listOf("Chat", "Vision", "Server", "Settings")
-        val icons = listOf(
-            Icons.Default.Chat,
-            Icons.Default.Image,
-            Icons.Default.Api,
-            Icons.Default.Settings
-        )
+        val icons = listOf(Icons.Default.Chat, Icons.Default.Image, Icons.Default.Api, Icons.Default.Settings)
         Scaffold(
             containerColor = DarkBackground,
             bottomBar = {
@@ -198,12 +184,7 @@ class MainActivity : ComponentActivity() {
                             selected = selectedTab == index,
                             onClick = { selectedTab = index },
                             icon = { Icon(icons[index], contentDescription = tab) },
-                            label = { Text(tab, color = if (selectedTab == index) GreenPrimary else Color.Gray) },
-                            colors = NavigationBarItemDefaults.colors(
-                                selectedIconColor = GreenPrimary,
-                                unselectedIconColor = Color.Gray,
-                                indicatorColor = Color(0xFF1A3A1A)
-                            )
+                            label = { Text(tab, color = if (selectedTab == index) GreenPrimary else Color.Gray) }
                         )
                     }
                 }
@@ -211,132 +192,23 @@ class MainActivity : ComponentActivity() {
         ) { padding ->
             Box(modifier = Modifier.padding(padding)) {
                 when (selectedTab) {
-                    0 -> ChatScreen(
-                        messages = chatMessages,
-                        isGenerating = isGenerating,
-                        onSend = ::sendMessage,
-                        onClear = { chatMessages.clear() }
-                    )
-                    1 -> VisionScreen(
-                        isAnalyzing = isAnalyzing,
-                        analysisResult = visionResult,
-                        onAnalyze = ::analyzeImage,
-                        onShare = {
-                            val clipboard = getSystemService(android.content.ClipboardManager::class.java)
-                            clipboard.setPrimaryClip(android.content.ClipData.newPlainText("result", it))
-                            Toast.makeText(this@MainActivity, "Copied!", Toast.LENGTH_SHORT).show()
-                        }
-                    )
-                    2 -> ServerScreen(
-                        isRunning = appState.isServerRunning,
-                        port = appState.serverPort,
-                        requestLog = appState.requestLog,
-                        onToggle = ::toggleServer
-                    )
+                    0 -> ChatScreen(messages = chatMessages, isGenerating = isGenerating, onSend = ::sendMessage, onClear = { chatMessages.clear() })
+                    1 -> VisionScreen(isAnalyzing = isAnalyzing, analysisResult = visionResult, onAnalyze = ::analyzeImage, onShare = { visionResult = it })
+                    2 -> ServerScreen(isRunning = appState.isServerRunning, port = appState.serverPort, requestLog = appState.requestLog, onToggle = ::toggleServer)
                     3 -> SettingsScreen(
                         modelPath = downloadManager.getModelPath(),
-                        onClearCache = { downloadManager.deleteModel(); checkModelAndUpdateState() },
-                        onSaveAndRestart = {
-                            if (appState.isServerRunning) {
-                                toggleServer() // Stop
-                                toggleServer() // Start
-                            } else {
-                                Toast.makeText(this@MainActivity, "Settings saved", Toast.LENGTH_SHORT).show()
-                            }
-                        }
+                        isServerRunning = appState.isServerRunning,
+                        onClearCache = { downloadManager.deleteModel(); appState = appState.copy(status = AppStatus.CONFIGURING) },
+                        onSaveSettings = { Toast.makeText(this@MainActivity, "Settings saved", Toast.LENGTH_SHORT).show() },
+                        onStartEngine = ::checkAndStartEngine
                     )
                 }
             }
         }
     }
 
-    // ── Chat ─────────────────────────────────────────────────────────────
-    private fun sendMessage(text: String) {
-        val engine = liteRTEngine
-        if (engine == null || !engine.isReady) {
-            Toast.makeText(this, "Engine not ready", Toast.LENGTH_SHORT).show()
-            return
-        }
-
-        val userMsg = ChatMessage(role = MessageRole.USER, content = text)
-        chatMessages.add(userMsg)
-
-        // Placeholder assistant bubble that streams tokens in
-        val assistantMsg = ChatMessage(
-            role = MessageRole.ASSISTANT,
-            content = "",
-            isStreaming = true
-        )
-        chatMessages.add(assistantMsg)
-        val assistantIndex = chatMessages.lastIndex
-        isGenerating = true
-
-        lifecycleScope.launch {
-            try {
-                engine.generateText(text)
-                    .onCompletion { err ->
-                        isGenerating = false
-                        chatMessages[assistantIndex] =
-                            chatMessages[assistantIndex].copy(isStreaming = false)
-                        if (err != null) {
-                            chatMessages[assistantIndex] =
-                                chatMessages[assistantIndex].copy(content = "Error: ${err.message}")
-                        }
-                    }
-                    .collect { token ->
-                        chatMessages[assistantIndex] = chatMessages[assistantIndex].copy(
-                            content = chatMessages[assistantIndex].content + token
-                        )
-                    }
-            } catch (e: Exception) {
-                isGenerating = false
-                chatMessages[assistantIndex] =
-                    chatMessages[assistantIndex].copy(
-                        content = "Error: ${e.message}",
-                        isStreaming = false
-                    )
-            }
-        }
-    }
-
-    // ── Vision ───────────────────────────────────────────────────────────
-    private fun analyzeImage(uri: Uri, prompt: String) {
-        val engine = liteRTEngine
-        if (engine == null || !engine.isReady) {
-            Toast.makeText(this, "Engine not ready", Toast.LENGTH_SHORT).show()
-            return
-        }
-
-        isAnalyzing = true
-        visionResult = ""
-
-        lifecycleScope.launch {
-            try {
-                // Copy URI to a temp file so LiteRT can read it as a file path
-                val tmpFile = File(cacheDir, "vision_input_${System.currentTimeMillis()}.jpg")
-                withContext(Dispatchers.IO) {
-                    contentResolver.openInputStream(uri)?.use { ins ->
-                        tmpFile.outputStream().use { out -> ins.copyTo(out) }
-                    }
-                }
-
-                engine.analyzeImage(tmpFile.absolutePath, prompt)
-                    .onCompletion {
-                        isAnalyzing = false
-                        tmpFile.delete()
-                    }
-                    .collect { token ->
-                        visionResult += token
-                    }
-            } catch (e: Exception) {
-                isAnalyzing = false
-                visionResult = "Error: ${e.message}"
-            }
-        }
-    }
-
-    // ── Lifecycle helpers ───────────────────────────────────────────────
-    private fun checkModelAndUpdateState() {
+    private fun checkAndStartEngine() {
+        downloadManager.setVariant(GemmaVariant.valueOf(settingsManager.modelVariant))
         if (downloadManager.isModelDownloaded()) {
             startEngineService()
         } else {
@@ -344,25 +216,45 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun startDownload() {
-        appState = appState.copy(status = AppStatus.DOWNLOADING, errorMessage = null)
-        lifecycleScope.launch(Dispatchers.IO) {
-            downloadManager.downloadModel()
-                .catch { e ->
-                    appState = appState.copy(
-                        status = AppStatus.DOWNLOAD_ERROR,
-                        errorMessage = e.message
-                    )
+    private fun sendMessage(text: String) {
+        val engine = liteRTEngine ?: return
+        val userMsg = ChatMessage(role = MessageRole.USER, content = text)
+        chatMessages.add(userMsg)
+        val assistantMsg = ChatMessage(role = MessageRole.ASSISTANT, content = "", isStreaming = true)
+        chatMessages.add(assistantMsg)
+        val assistantIndex = chatMessages.lastIndex
+        isGenerating = true
+        lifecycleScope.launch {
+            try {
+                engine.generateText(text).onCompletion { isGenerating = false }.collect { token ->
+                    chatMessages[assistantIndex] = chatMessages[assistantIndex].copy(content = chatMessages[assistantIndex].content + token)
                 }
+            } catch (e: Exception) {
+                isGenerating = false
+            }
+        }
+    }
+
+    private fun analyzeImage(uri: Uri, prompt: String) {
+        val engine = liteRTEngine ?: return
+        isAnalyzing = true
+        visionResult = ""
+        lifecycleScope.launch {
+            try {
+                val tmpFile = File(cacheDir, "vision_input.jpg")
+                withContext(Dispatchers.IO) { contentResolver.openInputStream(uri)?.use { it.copyTo(tmpFile.outputStream()) } }
+                engine.analyzeImage(tmpFile.absolutePath, prompt).onCompletion { isAnalyzing = false }.collect { visionResult += it }
+            } catch (e: Exception) { isAnalyzing = false }
+        }
+    }
+
+    private fun startDownload() {
+        appState = appState.copy(status = AppStatus.DOWNLOADING)
+        lifecycleScope.launch(Dispatchers.IO) {
+            downloadManager.downloadModel().catch { appState = appState.copy(status = AppStatus.DOWNLOAD_ERROR, errorMessage = it.message) }
                 .collect { progress ->
-                    appState = appState.copy(
-                        downloadProgress = progress.progressPercent,
-                        downloadedMb = progress.downloadedMb,
-                        totalMb = progress.totalMb,
-                        downloadSpeedMbps = progress.speedMbps,
-                        etaSeconds = progress.etaSeconds
-                    )
-                    if (progress.isDone) startEngineService()
+                    appState = appState.copy(downloadProgress = progress.progressPercent)
+                    if (progress.isDone) withContext(Dispatchers.Main) { startEngineService() }
                 }
         }
     }
@@ -371,7 +263,6 @@ class MainActivity : ComponentActivity() {
         appState = appState.copy(status = AppStatus.INITIALIZING)
         val intent = Intent(this, LLMForegroundService::class.java).apply {
             putExtra(LLMForegroundService.EXTRA_MODEL_PATH, downloadManager.getModelPath())
-            putExtra(LLMForegroundService.EXTRA_USE_GPU, true)
         }
         startForegroundService(intent)
     }
@@ -382,7 +273,7 @@ class MainActivity : ComponentActivity() {
             liteRTEngine = null
             appState = appState.copy(isServerRunning = false, engineReady = false)
         } else {
-            startEngineService()
+            checkAndStartEngine()
         }
     }
 

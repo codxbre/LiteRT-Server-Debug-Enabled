@@ -1,12 +1,16 @@
 package com.litert.server.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -22,8 +26,10 @@ import com.litert.server.util.SettingsManager
 @Composable
 fun SettingsScreen(
     modelPath: String,
+    isServerRunning: Boolean,
     onClearCache: () -> Unit,
-    onSaveAndRestart: () -> Unit
+    onSaveSettings: () -> Unit,
+    onStartEngine: () -> Unit
 ) {
     val context = LocalContext.current
     val settingsManager = remember { SettingsManager(context) }
@@ -34,6 +40,7 @@ fun SettingsScreen(
     var topP by remember { mutableFloatStateOf(settingsManager.topP) }
     var contextWindow by remember { mutableFloatStateOf(settingsManager.contextWindow.toFloat()) }
     var useGpu by remember { mutableStateOf(settingsManager.useGpu) }
+    var modelVariant by remember { mutableStateOf(settingsManager.modelVariant) }
     
     var showDeleteDialog by remember { mutableStateOf(false) }
 
@@ -58,7 +65,8 @@ fun SettingsScreen(
                     settingsManager.topP = topP
                     settingsManager.contextWindow = contextWindow.toInt()
                     settingsManager.useGpu = useGpu
-                    onSaveAndRestart()
+                    settingsManager.modelVariant = modelVariant
+                    onSaveSettings()
                 },
                 colors = ButtonDefaults.buttonColors(containerColor = GreenPrimary),
                 shape = RoundedCornerShape(8.dp),
@@ -66,19 +74,77 @@ fun SettingsScreen(
             ) {
                 Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("Save & Restart", fontSize = 14.sp)
+                Text("Save", fontSize = 14.sp)
             }
         }
         
         Spacer(modifier = Modifier.height(24.dp))
 
-        SettingsCard {
-            Text("Model Path", color = Color.Gray, fontSize = 12.sp)
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(modelPath, color = Color.White, fontSize = 13.sp)
+        if (!isServerRunning) {
+            Button(
+                onClick = onStartEngine,
+                modifier = Modifier.fillMaxWidth().height(56.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = GreenPrimary),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Icon(Icons.Default.PlayArrow, contentDescription = null)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Start Engine & Server", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            }
+            Spacer(modifier = Modifier.height(24.dp))
         }
 
-        Spacer(modifier = Modifier.height(12.dp))
+        Text("Model Configuration", color = Color.Gray, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+        Spacer(modifier = Modifier.height(8.dp))
+        SettingsCard {
+            Text("Select Variant", color = Color.White, fontWeight = FontWeight.SemiBold)
+            Spacer(modifier = Modifier.height(12.dp))
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                listOf("E2B", "E4B").forEach { variant ->
+                    val selected = modelVariant == variant
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(60.dp)
+                            .border(
+                                width = 2.dp,
+                                color = if (selected) GreenPrimary else Color(0xFF333333),
+                                shape = RoundedCornerShape(8.dp)
+                            )
+                            .background(
+                                if (selected) Color(0xFF1A3A1A) else SurfaceColor,
+                                RoundedCornerShape(8.dp)
+                            )
+                            .clickable { modelVariant = variant }
+                            .padding(8.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(
+                                variant,
+                                color = if (selected) GreenPrimary else Color.White,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                if (variant == "E2B") "2.6B Params" else "4.3B Params",
+                                color = Color.Gray,
+                                fontSize = 10.sp
+                            )
+                        }
+                        if (selected) {
+                            Icon(
+                                Icons.Default.Check,
+                                contentDescription = null,
+                                tint = GreenPrimary,
+                                modifier = Modifier.size(16.dp).align(Alignment.TopEnd)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
 
         SettingsCard {
             Row(
@@ -102,7 +168,7 @@ fun SettingsScreen(
             }
         }
 
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(modifier = Modifier.height(16.dp))
 
         SettingsCard {
             Row(
@@ -144,7 +210,6 @@ fun SettingsScreen(
                     inactiveTrackColor = Color(0xFF333333)
                 )
             )
-            Text("Maximum tokens the model can generate in a single response.", color = Color.Gray, fontSize = 11.sp)
         }
 
         Spacer(modifier = Modifier.height(12.dp))
@@ -167,51 +232,6 @@ fun SettingsScreen(
                     inactiveTrackColor = Color(0xFF333333)
                 )
             )
-            Text("Total capacity for prompt + response tokens.", color = Color.Gray, fontSize = 11.sp)
-        }
-
-        Spacer(modifier = Modifier.height(12.dp))
-        
-        SettingsCard {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text("Top P", color = Color.White, fontWeight = FontWeight.SemiBold)
-                Text("${"%.2f".format(topP)}", color = GreenPrimary)
-            }
-            Slider(
-                value = topP,
-                onValueChange = { topP = it },
-                valueRange = 0.1f..1.0f,
-                colors = SliderDefaults.colors(
-                    thumbColor = GreenPrimary,
-                    activeTrackColor = GreenPrimary,
-                    inactiveTrackColor = Color(0xFF333333)
-                )
-            )
-        }
-
-        Spacer(modifier = Modifier.height(12.dp))
-
-        SettingsCard {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text("Top K", color = Color.White, fontWeight = FontWeight.SemiBold)
-                Text("${topK.toInt()}", color = GreenPrimary)
-            }
-            Slider(
-                value = topK,
-                onValueChange = { topK = it },
-                valueRange = 1f..100f,
-                colors = SliderDefaults.colors(
-                    thumbColor = GreenPrimary,
-                    activeTrackColor = GreenPrimary,
-                    inactiveTrackColor = Color(0xFF333333)
-                )
-            )
         }
 
         Spacer(modifier = Modifier.height(24.dp))
@@ -219,7 +239,6 @@ fun SettingsScreen(
         OutlinedButton(
             onClick = { showDeleteDialog = true },
             modifier = Modifier.fillMaxWidth().height(48.dp),
-            border = ButtonDefaults.outlinedButtonBorder.copy(),
             colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFEF4444)),
             shape = RoundedCornerShape(10.dp)
         ) {
@@ -230,7 +249,7 @@ fun SettingsScreen(
 
         Spacer(modifier = Modifier.height(24.dp))
         Text("LiteRT Server v1.0", color = Color.Gray, fontSize = 12.sp)
-        Text("Gemma 4 E2B · LiteRT-LM SDK 0.10.0", color = Color.Gray, fontSize = 12.sp)
+        Text("Gemma 4 · LiteRT-LM SDK 0.10.0", color = Color.Gray, fontSize = 12.sp)
         Text("Optimized for 12GB RAM + 12GB Swap", color = Color.Gray, fontSize = 12.sp)
     }
 
@@ -238,7 +257,7 @@ fun SettingsScreen(
         AlertDialog(
             onDismissRequest = { showDeleteDialog = false },
             title = { Text("Delete Model?") },
-            text = { Text("This will delete the downloaded model (2.58 GB) and require a re-download.") },
+            text = { Text("This will delete the downloaded model and require a re-download.") },
             confirmButton = {
                 TextButton(onClick = {
                     onClearCache()
