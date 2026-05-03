@@ -4,6 +4,7 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.ActivityManager
+import android.content.Context
 import android.app.Service
 import android.content.Intent
 import android.os.IBinder
@@ -140,7 +141,7 @@ class LLMForegroundService : Service() {
                     return@launch
                 }
                 DebugLogger.log("Engine initialization successful")
-    ...
+
                 val requestLog = mutableListOf<RequestLogEntry>()
                 val server = HttpApiServer(engine) { entry ->
                     synchronized(requestLog) { requestLog.add(entry) }
